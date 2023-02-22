@@ -11,6 +11,7 @@ import (
 
 func main() {
 	// Argument parsing
+	message := flag.String("m", "", "Message to send and maybe mutate.")
 	messageCount := flag.Int("c", 1000, "Number of messages to send")
 	messageSize := flag.Int("s", 100, "Size in bytes of the message payload")
 	interval := flag.Int("i", 1, "Milliseconds to wait between messages")
@@ -23,6 +24,10 @@ func main() {
 	numberOfClients := flag.Int("n", 1, "Number of concurrent MQTT clients")
 	idAsSubTopic := flag.Bool("suffix", false, "If set to true the MQTT client ID will be used as an additional level to the topic specified by 't'")
 	qos := flag.Int("q", 1, "MQTT QoS used by all clients")
+	mutator := flag.String("M", "", "Mutate the topic and message: 'alfa': only replace alfa numeric characters by others (usually safe). 'sym': replace any character by any printable ASCII (less safe). 'bin': flip bits at random (can crash stuff).")
+	mutationRate := flag.Float64("Mr", 0.07, "Mutation rate, probability of mutating a character.")
+	debug := flag.Bool("debug", false, "Show debug output.")
+	disallowed := flag.String("disallowed", "", "List of characters not to mutate into. HiveMQ does not like '+#'.")
 
 	flag.Parse()
 
@@ -32,6 +37,7 @@ func main() {
 
 	// General Client Config
 	mqttClientConfig := MQTTClient.Config{
+		Message: message,
 		MessageCount: messageCount,
 		MessageSize:  messageSize,
 		Interval:     interval,
@@ -43,6 +49,10 @@ func main() {
 		Port:         port,
 		IdAsSubTopic: idAsSubTopic,
 		QoS:          qos,
+		Mutator: mutator,
+		MutationRate: mutationRate,
+		Debug: debug,
+		Disallowed: disallowed,
 	}
 
 	updates := make(chan int)
@@ -63,12 +73,16 @@ func main() {
 
 	go func(updates chan int) {
 		for update := range updates {
-			bar.Add(update)
+			// Updating the progress bar while outputing debug is messy
+			if !*debug {
+				bar.Add(update)
+			}
 		}
 	}(updates)
 
-	wg.Wait()
 	// Hacky way of avoiding the progress bar going away.
 	// Todo: check why this happens
 	bar.Add(0)
+
+	wg.Wait()
 }

@@ -6,11 +6,13 @@ import (
 	"os"
 	"sync"
 	"time"
+	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 type Config struct {
+	Message 		 *string
 	MessageCount *int
 	MessageSize  *int
 	Interval     *int
@@ -22,6 +24,10 @@ type Config struct {
 	Port         *int
 	IdAsSubTopic *bool
 	QoS          *int
+	Mutator 		 *string
+	MutationRate *float64
+	Debug 			 *bool
+	Disallowed   *string
 }
 
 type Client struct {
@@ -65,8 +71,15 @@ func (c *Client) Connect() {
 
 func (c Client) Start(wg *sync.WaitGroup) {
 	defer wg.Done()
-	payload := make([]byte, *c.Config.MessageSize)
-	rand.Read(payload)
+
+	var payload string
+	if *c.Config.Message == "" {
+		payloadBytes := make([]byte, *c.Config.MessageSize)
+		rand.Read(payloadBytes)
+		payload = string(payloadBytes)
+	} else {
+		payload = *c.Config.Message
+	}
 
 	var topic string
 	if *c.Config.IdAsSubTopic {
@@ -76,7 +89,15 @@ func (c Client) Start(wg *sync.WaitGroup) {
 	}
 
 	for i := 0; i < *c.Config.MessageCount; i++ {
-		token := c.Connection.Publish(topic, byte(*c.Config.QoS), false, payload)
+
+		mutant_topic := c.Mutate(topic)
+		mutant_payload := c.Mutate(payload)
+
+		if *c.Config.Debug {
+			optionsReader := c.Connection.OptionsReader()
+			fmt.Printf("%s Pub: %s %s\n", optionsReader.ClientID(), mutant_topic, mutant_payload)
+		}
+		token := c.Connection.Publish(mutant_topic, byte(*c.Config.QoS), false, mutant_payload)
 		token.Wait()
 
 		// If the interval is zero skip this logic
@@ -101,4 +122,44 @@ func (c Client) Subscribe(topic string) {
 	token := c.Connection.Subscribe(topic, 1, nil)
 	token.Wait()
 	fmt.Printf("Subscribed to topic '%s'\n", topic)
+}
+
+// Mutates a message based on client config
+// alfa Replace only alpha numeric characters by other alpha numeric characters.
+// sym Replace any character by other ascii printable characters.
+// bin Replace any character by any random byte.
+// *any other value* Does nothing. Safe default.
+func (c Client) Mutate(message string) string {
+	const alfanum = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	mutator := *c.Config.Mutator
+
+	if  mutator != "alfa" && mutator != "sym" && mutator != "bin" { return message }
+
+	mutant := ""
+	for _, ch := range message {
+		if rand.Float64() > *c.Config.MutationRate {
+			mutant += string(ch)
+			continue
+		}
+
+		var mutant_ch byte
+		if mutator == "alfa" {
+			mutant_ch = alfanum[rand.Intn(len(alfanum))]
+		}
+		if mutator == "sym" {
+			mutant_ch = byte(rand.Intn(95) + 32)
+		}
+		if mutator == "bin" {
+			mutant_ch = byte(int(ch) ^ rand.Intn(256))
+		}
+
+		// If the character is not allowed return original one.
+		if *c.Config.Disallowed != "" && strings.Contains(*c.Config.Disallowed, string(mutant_ch)) {
+			mutant_ch = byte(ch)
+		}
+
+		mutant += string(mutant_ch)
+	}
+
+	return mutant
 }
